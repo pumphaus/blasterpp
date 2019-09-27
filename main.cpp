@@ -1,5 +1,7 @@
 #include <chrono>
 #include <iostream>
+#include <fstream>
+#include <sstream>
 #include "blasterpp.h"
 
 #include <unistd.h>
@@ -13,9 +15,28 @@ void terminate(int)
     should_quit = true;
 }
 
+void setPinToOutput(int pin)
+{
+    {
+        std::ofstream exportFile("/sys/class/gpio/export");
+        exportFile << pin << std::endl;
+    }
+
+    {
+        std::stringstream gpioDirectionFileName;
+        gpioDirectionFileName << "/sys/class/gpio/gpio" << pin << "/direction";
+        std::ofstream gpioDirectionFile(gpioDirectionFileName.str());
+        gpioDirectionFile << "out" << std::endl;
+    }
+}
+
 int main(int argc, char **argv)
 {
     using namespace std::chrono_literals;
+
+    setPinToOutput(17);
+    setPinToOutput(22);
+    setPinToOutput(27);
 
     // Properly quit if possible
     signal(SIGHUP, terminate);
