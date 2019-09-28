@@ -181,8 +181,7 @@ static volatile uint32_t *clk_reg = nullptr;
 static volatile uint32_t *dma_virt_base = nullptr; /* base address of all DMA Channels */
 static volatile uint32_t *gpio_reg = nullptr;
 
-static void set_pwm(int channel, float value);
-static void update_pwm();
+static void static_initialize();
 
 // open a char device file used for communicating with kernel mbox driver
 static int mbox_open() {
@@ -208,20 +207,40 @@ static void mbox_close(int file_desc) {
   close(file_desc);
 }
 
-static void gpio_set_mode(uint32_t pin, uint32_t mode) {
-  uint32_t fsel = gpio_reg[GPIO_FSEL0 + pin/10];
+void setGpioMode(unsigned int pin, GpioMode mode)
+{
+    static_initialize();
+    uint32_t fsel = gpio_reg[GPIO_FSEL0 + pin/10];
 
-  fsel &= ~(7 << ((pin % 10) * 3));
-  fsel |= mode << ((pin % 10) * 3);
-  gpio_reg[GPIO_FSEL0 + pin/10] = fsel;
+    fsel &= ~(7 << ((pin % 10) * 3));
+    fsel |= mode << ((pin % 10) * 3);
+    gpio_reg[GPIO_FSEL0 + pin/10] = fsel;
 }
 
-static void gpio_set(unsigned int pin, bool on) {
-  if (on)
-    gpio_reg[GPIO_SET0] = 1 << pin;
-  else
-    gpio_reg[GPIO_CLR0] = 1 << pin;
+bool gpioValue(unsigned int pin)
+{
+    static_initialize();
+
+    return gpio_reg[GPIO_LEV0] & (1 << pin);
 }
+
+uint32_t gpioValues()
+{
+    static_initialize();
+    return gpio_reg[GPIO_LEV0];
+}
+
+void setGpioValue(unsigned int pin, bool value)
+{
+    static_initialize();
+
+    if (value) {
+        gpio_reg[GPIO_SET0] = 1 << pin;
+    } else {
+        gpio_reg[GPIO_CLR0] = 1 << pin;
+    }
+}
+
 
 static void udelay(int us) {
   struct timespec ts = { 0, us * 1000 };
@@ -355,6 +374,30 @@ static void* map_peripheral(uint32_t base, uint32_t len) {
   close(fd);
 
   return vaddr;
+}
+
+static void static_initialize()
+{
+    static bool initialized = false;
+    if (initialized) {
+        return;
+    }
+
+    std::ostream cout(std::cout.rdbuf());
+    unsigned mbox_board_rev = get_board_revision(mbox_handle);
+    cout << "MBox Board Revision: 0x" << std::hex << mbox_board_rev << std::endl;
+    get_model(mbox_board_rev);
+    unsigned mbox_dma_channels = get_dma_channels(mbox_handle);
+    cout << "DMA Channels Info: 0x" << std::hex << mbox_dma_channels << std::endl
+         << "DMA Base: 0x" << std::hex << DMA_BASE << std::endl;
+
+    dma_virt_base = (volatile uint32_t*) map_peripheral(DMA_BASE, (DMA_CHAN_SIZE * (DMA_CHAN_MAX + 1)));
+    pwm_reg = (volatile uint32_t*) map_peripheral(PWM_BASE, PWM_LEN);
+    pcm_reg = (volatile uint32_t*) map_peripheral(PCM_BASE, PCM_LEN);
+    clk_reg = (volatile uint32_t*) map_peripheral(CLK_BASE, CLK_LEN);
+    gpio_reg = (volatile uint32_t*) map_peripheral(GPIO_BASE, GPIO_LEN);
+
+    initialized = true;
 }
 
 DmaChannel::DmaChannel()
@@ -503,7 +546,7 @@ void DmaChannel::setPulseWidth(unsigned int pin,
         for (auto &samp : samps) {
             samp &= ~(1u << pin);
         }
-        gpio_set(pin, width == subcycle);
+        setGpioValue(pin, width == subcycle);
         return;
     }
 
@@ -521,30 +564,6 @@ void DmaChannel::setPwmDutyCycle(unsigned int pin, float duty, unsigned int mult
     using namespace std::chrono;
     setPulseWidth(pin, duration_cast<microseconds>(duty / mult * cycleTime()),
                   mult);
-}
-
-void DmaChannel::static_initialize()
-{
-    static bool initialized = false;
-    if (initialized) {
-        return;
-    }
-
-    std::ostream cout(std::cout.rdbuf());
-    unsigned mbox_board_rev = get_board_revision(mbox_handle);
-    cout << "MBox Board Revision: 0x" << std::hex << mbox_board_rev << std::endl;
-    get_model(mbox_board_rev);
-    unsigned mbox_dma_channels = get_dma_channels(mbox_handle);
-    cout << "DMA Channels Info: 0x" << std::hex << mbox_dma_channels << std::endl
-         << "DMA Base: 0x" << std::hex << DMA_BASE << std::endl;
-
-    dma_virt_base = (volatile uint32_t*) map_peripheral(DMA_BASE, (DMA_CHAN_SIZE * (DMA_CHAN_MAX + 1)));
-    pwm_reg = (volatile uint32_t*) map_peripheral(PWM_BASE, PWM_LEN);
-    pcm_reg = (volatile uint32_t*) map_peripheral(PCM_BASE, PCM_LEN);
-    clk_reg = (volatile uint32_t*) map_peripheral(CLK_BASE, CLK_LEN);
-    gpio_reg = (volatile uint32_t*) map_peripheral(GPIO_BASE, GPIO_LEN);
-
-    initialized = true;
 }
 
 void DmaChannel::init_hardware() {

@@ -37,6 +37,16 @@
 
 namespace BlasterPP {
 
+enum GpioMode {
+    ModeInput = 0,
+    ModeOutput = 1
+};
+
+void setGpioMode(unsigned int pin, GpioMode mode);
+bool gpioValue(unsigned int pin);
+std::uint32_t gpioValues();
+void setGpioValue(unsigned int pin, bool value);
+
 struct vc_mem;
 
 struct dma_cb_t {
@@ -165,7 +175,6 @@ public:
     tcb::span<uint32_t> samples() { return m_ctl.sample; }
 
 private:
-    static void static_initialize();
     void init_hardware();
 
     unsigned int controlBlockCount() const;
