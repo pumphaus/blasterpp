@@ -80,6 +80,11 @@ public:
         DelayViaPcm,
     };
 
+    enum LoopMode {
+        Loop,
+        SingleShot
+    };
+
     explicit DmaChannel();
 
     /**
@@ -89,16 +94,24 @@ public:
      */
     explicit DmaChannel(unsigned int channelNumber, unsigned int sampleCount,
                         const std::chrono::microseconds &sampleTime,
-                        DelayHardware delayHardware = DelayViaPwm);
+                        DelayHardware delayHardware = DelayViaPwm,
+                        LoopMode loopMode = Loop);
     ~DmaChannel();
 
     /// @brief Resets the DMA channel (i.e. turns it off)
     void reset();
 
+    /// @brief (Re-)starts DMA
+    bool restart();
+
+    /// @brief Alias for restart()
+    bool start() { return restart(); }
+
     /// @brief Reconfigures the DMA channel and activates output
     void reconfigure(unsigned int channelNumber, unsigned int sampleCount,
                      const std::chrono::microseconds &sampleTime,
-                     DelayHardware delayHardware = DelayViaPwm);
+                     DelayHardware delayHardware = DelayViaPwm,
+                     LoopMode loopMode = Loop);
 
     /// @brief The DMA channel number
     unsigned int channelNumber() const { return m_channelNumber; }
@@ -174,6 +187,8 @@ public:
      */
     tcb::span<uint32_t> samples() { return m_ctl.sample; }
 
+    int currentSampleIndex() const;
+
 private:
     void init_hardware();
 
@@ -188,6 +203,7 @@ private:
     std::unique_ptr<vc_mem> m_vcMem;
     Control m_ctl;
     DelayHardware m_delayHardware;
+    LoopMode m_loopMode = Loop;
 };
 
 } // namespace BlasterPP

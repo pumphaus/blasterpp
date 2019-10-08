@@ -309,6 +309,10 @@ struct vc_mem {
       return bus_addr + offset;
     }
 
+    void *phys_to_virt(uint32_t phys) {
+        return virt_addr + (phys - bus_addr);
+    }
+
     unsigned int mem_ref = 0;	/* From mem_alloc() */
     unsigned int bus_addr = 0;	/* From mem_lock() */
     uint8_t *virt_addr = nullptr;	/* From mapmem() */
@@ -407,9 +411,9 @@ DmaChannel::DmaChannel()
 
 DmaChannel::DmaChannel(unsigned int channelNumber, unsigned int sampleCount,
                        const std::chrono::microseconds &sampleTime,
-                       DmaChannel::DelayHardware delayHardware)
+                       DmaChannel::DelayHardware delayHardware, LoopMode loopMode)
 {
-    reconfigure(channelNumber, sampleCount, sampleTime, delayHardware);
+    reconfigure(channelNumber, sampleCount, sampleTime, delayHardware, loopMode);
 }
 
 DmaChannel::~DmaChannel()
@@ -424,6 +428,27 @@ void DmaChannel::reset()
     }
 }
 
+bool DmaChannel::restart()
+{
+    if (!dma_reg) {
+        return false;
+    }
+
+    // Initialise the DMA
+    dma_reg[DMA_CS] = DMA_RESET;
+    udelay(10);
+    dma_reg[DMA_CS] = DMA_INT | DMA_END;
+    dma_reg[DMA_CONBLK_AD] = m_vcMem->virt_to_phys(m_ctl.cb.begin());
+    dma_reg[DMA_DEBUG] = 7; // clear debug error flags
+    dma_reg[DMA_CS] = 0x10880001;	// go, mid priority, wait for outstanding writes
+
+    if (m_delayHardware == DelayViaPcm) {
+        pcm_reg[PCM_CS_A] |= 1<<2;			// Enable Tx
+    }
+
+    return true;
+}
+
 unsigned int DmaChannel::pageCount() const {
     return (controlBlockCount() * sizeof(dma_cb_t)
             + sampleCount() * sizeof(uint32_t) + PAGE_SIZE - 1) >> PAGE_SHIFT;
@@ -432,7 +457,7 @@ unsigned int DmaChannel::pageCount() const {
 void DmaChannel::reconfigure(unsigned int channelNumber,
                              unsigned int sampleCount,
                              const std::chrono::microseconds &sampleTime,
-                             DelayHardware delayHardware)
+                             DelayHardware delayHardware, LoopMode loopMode)
 {
     static_initialize();
 
@@ -443,6 +468,7 @@ void DmaChannel::reconfigure(unsigned int channelNumber,
     m_pattern.resize(sampleCount, false);
     m_sampleTime = sampleTime;
     m_delayHardware = delayHardware;
+    m_loopMode = loopMode;
 
     std::cout << "Initializing DMA channel " << m_channelNumber << std::endl;
 
@@ -498,7 +524,11 @@ void DmaChannel::reconfigure(unsigned int channelNumber,
         cbp->next = m_vcMem->virt_to_phys(cbp + 1);
     }
 
-    m_ctl.cb.back().next = m_vcMem->virt_to_phys(m_ctl.cb.begin());
+    if (m_loopMode == Loop) {
+        m_ctl.cb.back().next = m_vcMem->virt_to_phys(m_ctl.cb.begin());
+    } else {
+        m_ctl.cb.back().next = m_vcMem->virt_to_phys(&m_ctl.cb.back());
+    }
 
     init_hardware();
 }
@@ -566,6 +596,12 @@ void DmaChannel::setPwmDutyCycle(unsigned int pin, float duty, unsigned int mult
                   mult);
 }
 
+int DmaChannel::currentSampleIndex() const
+{
+    auto cur_cb = reinterpret_cast<dma_cb_t*>(m_vcMem->phys_to_virt(dma_reg[DMA_CONBLK_AD]));
+    return std::distance(m_ctl.cb.begin(), cur_cb) / 2;
+}
+
 void DmaChannel::init_hardware() {
     const uint32_t nCycles = m_sampleTime.count() * 10;
 
@@ -614,18 +650,6 @@ void DmaChannel::init_hardware() {
     }
 
     std::cout << "  one sample = " << nCycles << " cycles at 10 MHz" << std::endl;
-
-    // Initialise the DMA
-    dma_reg[DMA_CS] = DMA_RESET;
-    udelay(10);
-    dma_reg[DMA_CS] = DMA_INT | DMA_END;
-    dma_reg[DMA_CONBLK_AD] = m_vcMem->virt_to_phys(m_ctl.cb.begin());
-    dma_reg[DMA_DEBUG] = 7; // clear debug error flags
-    dma_reg[DMA_CS] = 0x10880001;	// go, mid priority, wait for outstanding writes
-
-    if (m_delayHardware == DelayViaPcm) {
-        pcm_reg[PCM_CS_A] |= 1<<2;			// Enable Tx
-    }
 }
 
 unsigned int BlasterPP::DmaChannel::controlBlockCount() const

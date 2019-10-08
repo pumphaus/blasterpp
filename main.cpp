@@ -67,6 +67,8 @@ int main(int argc, char **argv)
               << " for a maximum PWM frequency of "
               << (channel.cycleFrequency() * FreqMult) << " Hz" << std::endl;
 
+    channel.start();
+
     while (!should_quit) {
         usleep(1000);
     }
