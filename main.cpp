@@ -35,7 +35,6 @@ int main(int argc, char **argv)
     using namespace std::chrono_literals;
 
     setPinToOutput(17);
-    setPinToOutput(22);
     setPinToOutput(27);
 
     // Properly quit if possible
@@ -45,21 +44,17 @@ int main(int argc, char **argv)
     signal(SIGKILL, terminate);
     signal(SIGABRT, terminate);
 
-    // 20'000 samples * 1us each = 20'000 us = 20 ms cycle time (i.e. 50 Hz)
-    BlasterPP::DmaChannel channel(14, 20000, 1us);
+    // 10'000 samples * 2us each = 20'000 us = 20 ms cycle time (i.e. 50 Hz),
+    // 2 subchannels
+    BlasterPP::DmaChannel channel(14, 10000, 2us, 2);
 
-    // Set a PWM pattern for a maximum frequency of FreqMult * cycleTime
-    // (i.e. 8 * 50 Hz = 400 Hz in this case)
-    channel.setPwmPattern(FreqMult);
+    // PWM on both subchannels
+    channel.setPwmPattern(0);
+    channel.setPwmPattern(1, FreqMult);
 
-    // 20 % duty cycle on pin 17 @ 50 Hz
-    channel.setPwmDutyCycle(17, 0.2, 1 /* no multiplier */);
-
-    // 30 % duty cycle on pin 27 @ 200 Hz
-    channel.setPwmDutyCycle(27, 0.3, FreqMult / 2);
-
-    // 40 % duty cycle on pin 22 @ 400 Hz
-    channel.setPwmDutyCycle(22, 0.4, FreqMult);
+    // 50% duty cycle on both subchannels, but one is upmixed to 8x the frequency
+    channel.setPwmDutyCycle(0, 17, 0.5);
+    channel.setPwmDutyCycle(1, 27, 0.5, FreqMult);
 
     std::cout << "DMA channel cycle frequency is " << channel.cycleFrequency()
               << " Hz" << std::endl;

@@ -50,6 +50,7 @@
 #include <chrono>
 #include <iostream>
 #include <memory>
+#include <sstream>
 #include <vector>
 
 #include "blasterpp.h"
@@ -409,11 +410,14 @@ DmaChannel::DmaChannel()
 
 }
 
-DmaChannel::DmaChannel(unsigned int channelNumber, unsigned int sampleCount,
-                       const std::chrono::microseconds &sampleTime,
-                       DmaChannel::DelayHardware delayHardware, LoopMode loopMode)
+DmaChannel::DmaChannel(unsigned int channelNumber,
+                       unsigned int sampleCount,
+                       const std::chrono::nanoseconds &sampleTime,
+                       unsigned int subchannelCount,
+                       DelayHardware delayHardware, LoopMode loopMode)
 {
-    reconfigure(channelNumber, sampleCount, sampleTime, delayHardware, loopMode);
+    reconfigure(channelNumber, sampleCount, sampleTime, subchannelCount,
+                delayHardware, loopMode);
 }
 
 DmaChannel::~DmaChannel()
@@ -451,26 +455,37 @@ bool DmaChannel::restart()
 
 unsigned int DmaChannel::pageCount() const {
     return (controlBlockCount() * sizeof(dma_cb_t)
-            + sampleCount() * sizeof(uint32_t) + PAGE_SIZE - 1) >> PAGE_SHIFT;
+            + subchannelCount() * sampleCount() * sizeof(uint32_t) + PAGE_SIZE - 1) >> PAGE_SHIFT;
 }
 
 void DmaChannel::reconfigure(unsigned int channelNumber,
                              unsigned int sampleCount,
-                             const std::chrono::microseconds &sampleTime,
+                             std::chrono::nanoseconds sampleTime,
+                             unsigned int subchannelCount,
                              DelayHardware delayHardware, LoopMode loopMode)
 {
+    using namespace std::chrono_literals;
+
     static_initialize();
 
     reset();
 
+    if (sampleTime / subchannelCount < 1000ns) {
+        sampleTime = subchannelCount * 1000ns;
+        std::cerr << "Sample time too low for stable operation. Increasing to "
+                  << sampleTime.count() << " ns." << std::endl;
+    }
+
     m_channelNumber = channelNumber;
-    m_pattern.clear();
-    m_pattern.resize(sampleCount, false);
+    m_patterns.clear();
+    m_patterns.resize(subchannelCount, std::vector<bool>(sampleCount));
     m_sampleTime = sampleTime;
     m_delayHardware = delayHardware;
     m_loopMode = loopMode;
 
-    std::cout << "Initializing DMA channel " << m_channelNumber << std::endl;
+    std::cout << "Initializing DMA channel " << m_channelNumber << std::endl
+              << "  subchannels: " << this->subchannelCount() << std::endl
+              << "  samples per channel: " << this->sampleCount() << std::endl;
 
     m_vcMem = std::make_unique<vc_mem>(pageCount());
     dma_reg = (volatile uint32_t*) dma_virt_base + m_channelNumber * (DMA_CHAN_SIZE / sizeof(dma_reg));
@@ -480,8 +495,10 @@ void DmaChannel::reconfigure(unsigned int channelNumber,
         return;
     }
 
-    m_ctl.sample = tcb::span<uint32_t>((uint32_t*) m_vcMem->virt_addr, this->sampleCount());
-    m_ctl.cb = tcb::span<dma_cb_t>((dma_cb_t*) (m_vcMem->virt_addr + this->sampleCount() * sizeof(uint32_t)), this->sampleCount() * 2);
+    m_ctl.sample = tcb::span<uint32_t>((uint32_t*) m_vcMem->virt_addr, this->sampleCount() * this->subchannelCount());
+    m_ctl.cb = tcb::span<dma_cb_t>((dma_cb_t*) (m_vcMem->virt_addr + this->sampleCount() * this->subchannelCount() * sizeof(uint32_t)), controlBlockCount());
+
+    const size_t cbStride = controlBlockStride();
 
     uint32_t phys_fifo_addr;
     const uint32_t phys_gpclr0 = GPIO_PHYS_BASE + 0x28;
@@ -498,24 +515,27 @@ void DmaChannel::reconfigure(unsigned int channelNumber,
     }
     std::fill(m_ctl.sample.begin(), m_ctl.sample.end(), 0);
 
-    /* Initialize all the DMA commands. They come in pairs.
-     *  - 1st command copies a value from the sample memory to a destination
+    /* Initialize all the DMA commands. They come in batches.
+     *  - The fist commands copy a value from the sample memory to a destination
      *    address which can be either the gpclr0 register or the gpset0 register
-     *  - 2nd command waits for a trigger from an external source (PWM or PCM)
+     *  - The last command waits for a trigger from an external source (PWM or PCM)
      */
     for (size_t i = 0; i < this->sampleCount(); ++i) {
-        /* First DMA command */
-        auto cbp = &m_ctl.cb[2 * i];
+        auto cbp = &m_ctl.cb[i * cbStride];
 
-        cbp->info = DMA_NO_WIDE_BURSTS | DMA_WAIT_RESP;
-        cbp->src = m_vcMem->virt_to_phys(&m_ctl.sample[i]);
-        cbp->dst = m_pattern[i] ?  phys_gpset0 : phys_gpclr0;
-        cbp->length = 4;
-        cbp->stride = 0;
-        cbp->next = m_vcMem->virt_to_phys(cbp + 1);
+        // For each subchannel, copy a sample to the destination register. The
+        // destination register can be changed in setPattern()
+        for (size_t j = 0; j < this->subchannelCount(); ++j) {
+            cbp->info = DMA_NO_WIDE_BURSTS | DMA_WAIT_RESP;
+            cbp->src = m_vcMem->virt_to_phys(&samples(j)[i]);
+            cbp->dst = phys_gpclr0;
+            cbp->length = 4;
+            cbp->stride = 0;
+            cbp->next = m_vcMem->virt_to_phys(cbp + 1);
+            cbp++;
+        }
 
-        /* Second DMA command */
-        cbp++;
+        /* Last DMA command */
         cbp->info = dmaFlags;
         cbp->src = m_vcMem->virt_to_phys(m_ctl.sample.begin());	// Any data will do
         cbp->dst = phys_fifo_addr;
@@ -533,44 +553,79 @@ void DmaChannel::reconfigure(unsigned int channelNumber,
     init_hardware();
 }
 
-void DmaChannel::setPattern(std::vector<bool> pattern)
+unsigned int DmaChannel::sampleCount() const
 {
-    pattern.resize(m_pattern.size());
-    m_pattern = std::move(pattern);
+    return m_patterns[0].size();
+}
+
+void DmaChannel::setPattern(unsigned int subChannel, std::vector<bool> pattern)
+{
+    if (subChannel >= subchannelCount()) {
+        std::stringstream ss;
+        ss << "Subchannel " << subChannel
+                  << " out of bounds (subchannel count " << subchannelCount()
+                  << ")";
+        throw std::runtime_error(ss.str());
+    }
+
+    pattern.resize(sampleCount());
 
     const uint32_t phys_gpclr0 = GPIO_PHYS_BASE + 0x28;
     const uint32_t phys_gpset0 = GPIO_PHYS_BASE + 0x1c;
 
-    for (size_t i = 0; i < this->sampleCount(); ++i) {
-        auto cbp = &m_ctl.cb[2 * i];
+    const size_t cbStride = controlBlockStride();
 
-        cbp->dst = m_pattern[i] ?  phys_gpset0 : phys_gpclr0;
+    for (size_t i = 0; i < this->sampleCount(); ++i) {
+        auto cbp = &m_ctl.cb[i * cbStride + subChannel];
+
+        cbp->dst = pattern[i] ? phys_gpset0 : phys_gpclr0;
     }
+
+    m_patterns[subChannel] = std::move(pattern);
 }
 
-void DmaChannel::setPwmPattern(unsigned int frequencyMultiplier)
+void DmaChannel::setPwmPattern(unsigned int subChannel, unsigned int frequencyMultiplier)
 {
-    auto pattern = m_pattern;
+    if (subChannel >= subchannelCount()) {
+        std::stringstream ss;
+        ss << "Subchannel " << subChannel
+                  << " out of bounds (subchannel count " << subchannelCount()
+                  << ")";
+        throw std::runtime_error(ss.str());
+    }
+
+    auto pattern = this->pattern(subChannel);
     const size_t subcycle = pattern.size() / frequencyMultiplier;
 
     for (size_t i = 0; i < pattern.size(); ++i) {
         pattern[i] = (i % subcycle == 0);
     }
 
-    setPattern(pattern);
+    setPattern(subChannel, pattern);
 }
 
-void DmaChannel::setPulseWidth(unsigned int pin,
+void DmaChannel::setPulseWidth(unsigned int subChannel,
+                               unsigned int pin,
                                const std::chrono::microseconds &length,
                                unsigned int mult)
 {
+    if (subChannel >= subchannelCount()) {
+        std::stringstream ss;
+        ss << "Subchannel " << subChannel
+                  << " out of bounds (subchannel count " << subchannelCount()
+                  << ")";
+        throw std::runtime_error(ss.str());
+    }
+
     const unsigned subcycle = sampleCount() / mult;
     unsigned int width = std::clamp<long>(length / sampleTime(), 0, subcycle);
-    if (width && m_pattern[width]) {
+    const auto pattern = this->pattern(subChannel);
+
+    if (width && pattern[width]) {
         width--;
     }
 
-    auto samps = samples();
+    auto samps = samples(subChannel);
     if (!width || width == subcycle) {
         // Zero-width or full-scale: deactivate PWM and set static value
         for (auto &samp : samps) {
@@ -589,21 +644,53 @@ void DmaChannel::setPulseWidth(unsigned int pin,
     }
 }
 
-void DmaChannel::setPwmDutyCycle(unsigned int pin, float duty, unsigned int mult)
+void DmaChannel::setPwmDutyCycle(unsigned int subChannel, unsigned int pin, float duty, unsigned int mult)
 {
     using namespace std::chrono;
-    setPulseWidth(pin, duration_cast<microseconds>(duty / mult * cycleTime()),
-                  mult);
+    setPulseWidth(subChannel, pin,
+                  duration_cast<microseconds>(duty / mult * cycleTime()), mult);
+}
+
+std::vector<bool> DmaChannel::pattern(unsigned int subChannel) const
+{
+    if (subChannel >= subchannelCount()) {
+        std::stringstream ss;
+        ss << "Subchannel " << subChannel
+                  << " out of bounds (subchannel count " << subchannelCount()
+                  << ")";
+        throw std::runtime_error(ss.str());
+    }
+
+    return m_patterns[subChannel];
+}
+
+tcb::span<uint32_t> DmaChannel::samples(unsigned int subChannel)
+{
+    if (subChannel >= subchannelCount()) {
+        std::stringstream ss;
+        ss << "Subchannel " << subChannel
+                  << " out of bounds (subchannel count " << subchannelCount()
+                  << ")";
+        throw std::runtime_error(ss.str());
+    }
+
+    return tcb::span<uint32_t>(m_ctl.sample.begin() + subChannel * sampleCount(),
+                               sampleCount());
+}
+
+tcb::span<uint32_t> DmaChannel::allSamples()
+{
+    return m_ctl.sample;
 }
 
 int DmaChannel::currentSampleIndex() const
 {
     auto cur_cb = reinterpret_cast<dma_cb_t*>(m_vcMem->phys_to_virt(dma_reg[DMA_CONBLK_AD]));
-    return std::distance(m_ctl.cb.begin(), cur_cb) / 2;
+    return std::distance(m_ctl.cb.begin(), cur_cb) / controlBlockStride();
 }
 
 void DmaChannel::init_hardware() {
-    const uint32_t nCycles = m_sampleTime.count() * 10;
+    const uint32_t nCycles = m_sampleTime.count() / 100;
 
     if (m_delayHardware == DelayViaPwm) {
         // Initialise PWM
@@ -654,7 +741,12 @@ void DmaChannel::init_hardware() {
 
 unsigned int BlasterPP::DmaChannel::controlBlockCount() const
 {
-    return sampleCount() * 2;
+    return sampleCount() * controlBlockStride();
+}
+
+unsigned int DmaChannel::controlBlockStride() const
+{
+    return 1 + subchannelCount();
 }
 
 }  // namespace BlasterPP

@@ -70,7 +70,8 @@ struct Control
  * The lowest sample period is 1 microsecond, giving a GPIO update frequency
  * of 1 MHz. With tighter timing settings one might reach a very unstable
  * 1.5 MHz output frequency on the GPIOs. I didn't manager to get it any
- * faster, though. 1 MHz seems to be a limit for stable operation.
+ * faster, though. 1 MHz seems to be a limit for stable operation. This class
+ * enforces the maximum data rate of 1 MHz.
  */
 class DmaChannel
 {
@@ -93,7 +94,8 @@ public:
      * @sa reconfigure()
      */
     explicit DmaChannel(unsigned int channelNumber, unsigned int sampleCount,
-                        const std::chrono::microseconds &sampleTime,
+                        const std::chrono::nanoseconds &sampleTime,
+                        unsigned int subchannelCount,
                         DelayHardware delayHardware = DelayViaPwm,
                         LoopMode loopMode = Loop);
     ~DmaChannel();
@@ -107,17 +109,31 @@ public:
     /// @brief Alias for restart()
     bool start() { return restart(); }
 
-    /// @brief Reconfigures the DMA channel and activates output
+    /**
+     * @brief Reconfigures the DMA channel
+     *
+     * Keep in mind that the maximum stable output frequency is about 1 MHz
+     * (i.e. 1 us sample time). When you have more than one subchannel,
+     * the minimum sample time that gives stable operation increases accordingly:
+     * 2 subchannels => 2 us, 3 subchannels => 3 us etc.
+     *
+     * Resolution of the sample time is 100 ns, rounded down (i.e when you
+     * specify 1150 ns, it gets rounded down to 1100 ns).
+     */
     void reconfigure(unsigned int channelNumber, unsigned int sampleCount,
-                     const std::chrono::microseconds &sampleTime,
+                     std::chrono::nanoseconds sampleTime,
+                     unsigned int subchannelCount = 1,
                      DelayHardware delayHardware = DelayViaPwm,
                      LoopMode loopMode = Loop);
 
     /// @brief The DMA channel number
     unsigned int channelNumber() const { return m_channelNumber; }
 
-    /// @brief The number of samples
-    unsigned int sampleCount() const { return m_pattern.size(); }
+    /// @brief The number of samples per subchannel
+    unsigned int sampleCount() const;
+
+    ///  @brief The number of subchannels
+    unsigned int subchannelCount() const { return m_patterns.size(); }
 
     /**
      * @brief The on/off pattern as a boolean vector
@@ -125,7 +141,7 @@ public:
      * The size of the vector should match the number of samples. It is resized
      * to that number, potentially dropping or appending elements.
      */
-    void setPattern(std::vector<bool> pattern);
+    void setPattern(unsigned int subChannel, std::vector<bool> pattern);
 
     /**
      * @brief sets a PWM pattern on the DMA channel
@@ -141,7 +157,7 @@ public:
      *
      * @sa setPulseWidth()
      */
-    void setPwmPattern(unsigned int frequencyMultiplier = 1);
+    void setPwmPattern(unsigned int subChannel, unsigned int frequencyMultiplier = 1);
 
     /**
      * @brief Sets the pulse width on @p pin to @p length, optionally honoring
@@ -153,25 +169,25 @@ public:
      *
      * @sa setPwmPattern()
      */
-    void setPulseWidth(unsigned int pin,
-                       const std::chrono::microseconds &length,
-                       unsigned int mult = 1);
+    void setPulseWidth(unsigned int subChannel, unsigned int pin,
+                       const std::chrono::microseconds &length, unsigned int mult = 1);
 
     /**
      * @brief Convenience method to set a duty cycle @p duty on @pin
      *
      * Calculates the correct pulse width and calls setPulseWidth().
      */
-    void setPwmDutyCycle(unsigned int pin, float duty, unsigned int mult = 1);
+    void setPwmDutyCycle(unsigned int subChannel, unsigned int pin,
+                         float duty, unsigned int mult = 1);
 
     /// @brief Returns the current output on/off pattern
-    std::vector<bool> pattern() const { return m_pattern; }
+    std::vector<bool> pattern(unsigned int subChannel) const;
 
     /// @brief Returns the sample time
-    std::chrono::microseconds sampleTime() const { return m_sampleTime; }
+    std::chrono::nanoseconds sampleTime() const { return m_sampleTime; }
 
     /// @brief Returns the full cycle time
-    std::chrono::microseconds cycleTime() const { return sampleCount() * sampleTime(); }
+    std::chrono::nanoseconds cycleTime() const { return sampleCount() * sampleTime(); }
 
     /// @brief Returns the cycle frequency
     double cycleFrequency() const {
@@ -185,7 +201,14 @@ public:
      * Each bit in a sample corresponds to a pin. If the pin-bit is set, the
      * pattern's on/off value will be written to the corresponding pin.
      */
-    tcb::span<uint32_t> samples() { return m_ctl.sample; }
+    tcb::span<uint32_t> samples(unsigned int subChannel);
+
+    /**
+     * @brief Returns all the samples that are written to the GPIOs
+     *
+     * The subchannels are laid out one after the other in the returned span.
+     */
+    tcb::span<uint32_t> allSamples();
 
     int currentSampleIndex() const;
 
@@ -193,13 +216,14 @@ private:
     void init_hardware();
 
     unsigned int controlBlockCount() const;
+    unsigned int controlBlockStride() const;
     unsigned int pageCount() const;
 
     volatile uint32_t *dma_reg = nullptr;  // pointer to the DMA Channel registers we are using
 
     unsigned int m_channelNumber = 0;
-    std::vector<bool> m_pattern;
-    std::chrono::microseconds m_sampleTime;
+    std::vector<std::vector<bool>> m_patterns;
+    std::chrono::nanoseconds m_sampleTime;
     std::unique_ptr<vc_mem> m_vcMem;
     Control m_ctl;
     DelayHardware m_delayHardware;
