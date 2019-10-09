@@ -61,8 +61,8 @@ struct Control
 };
 
 /**
- * @brief DmaChannel provides the functionality to push data to the GPIOs
- *        via the Raspberry Pi's DMA engine
+ * @brief DmaChannel provides the functionality to push or pull data to/from
+ *        the GPIOs via the Raspberry Pi's DMA engine
  *
  * Note that this does not install any signal handlers. You should make sure
  * that all destructors run and that the app exits cleanly.
