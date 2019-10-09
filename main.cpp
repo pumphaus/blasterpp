@@ -15,27 +15,13 @@ void terminate(int)
     should_quit = true;
 }
 
-void setPinToOutput(int pin)
-{
-    {
-        std::ofstream exportFile("/sys/class/gpio/export");
-        exportFile << pin << std::endl;
-    }
-
-    {
-        std::stringstream gpioDirectionFileName;
-        gpioDirectionFileName << "/sys/class/gpio/gpio" << pin << "/direction";
-        std::ofstream gpioDirectionFile(gpioDirectionFileName.str());
-        gpioDirectionFile << "out" << std::endl;
-    }
-}
-
 int main(int argc, char **argv)
 {
     using namespace std::chrono_literals;
+    using namespace BlasterPP;
 
-    setPinToOutput(17);
-    setPinToOutput(27);
+    setGpioMode(17, ModeOutput);
+    setGpioMode(27, ModeOutput);
 
     // Properly quit if possible
     signal(SIGHUP, terminate);
@@ -46,7 +32,7 @@ int main(int argc, char **argv)
 
     // 10'000 samples * 2us each = 20'000 us = 20 ms cycle time (i.e. 50 Hz),
     // 2 subchannels
-    BlasterPP::DmaChannel channel(14, 10000, 2us, 2);
+    DmaChannel channel(14, 10000, 2us, 2);
 
     // PWM on both subchannels
     channel.setPwmPattern(0);

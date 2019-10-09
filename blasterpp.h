@@ -96,6 +96,7 @@ public:
     explicit DmaChannel(unsigned int channelNumber, unsigned int sampleCount,
                         const std::chrono::nanoseconds &sampleTime,
                         unsigned int subchannelCount,
+                        int inputSubChannelIndex = -1,
                         DelayHardware delayHardware = DelayViaPwm,
                         LoopMode loopMode = Loop);
     ~DmaChannel();
@@ -123,6 +124,7 @@ public:
     void reconfigure(unsigned int channelNumber, unsigned int sampleCount,
                      std::chrono::nanoseconds sampleTime,
                      unsigned int subchannelCount = 1,
+                     int inputSubChannelIndex = -1,
                      DelayHardware delayHardware = DelayViaPwm,
                      LoopMode loopMode = Loop);
 
@@ -198,8 +200,11 @@ public:
     /**
      * @brief Returns the samples that are written to the GPIOs
      *
-     * Each bit in a sample corresponds to a pin. If the pin-bit is set, the
-     * pattern's on/off value will be written to the corresponding pin.
+     * Each bit in a sample corresponds to a pin.
+     * For output channels, if the pin-bit is set, the pattern's on/off value
+     * will be written to the corresponding pin.
+     *
+     * For input channels, a sample is a bit-mask of the current GPIO state.
      */
     tcb::span<uint32_t> samples(unsigned int subChannel);
 
@@ -207,10 +212,14 @@ public:
      * @brief Returns all the samples that are written to the GPIOs
      *
      * The subchannels are laid out one after the other in the returned span.
+     *
+     * @sa samples()
      */
     tcb::span<uint32_t> allSamples();
 
     int currentSampleIndex() const;
+
+    bool atEnd() const { return currentSampleIndex() == sampleCount() - 1; }
 
 private:
     void init_hardware();
@@ -222,6 +231,7 @@ private:
     volatile uint32_t *dma_reg = nullptr;  // pointer to the DMA Channel registers we are using
 
     unsigned int m_channelNumber = 0;
+    int m_inputSubChannelIndex = -1;
     std::vector<std::vector<bool>> m_patterns;
     std::chrono::nanoseconds m_sampleTime;
     std::unique_ptr<vc_mem> m_vcMem;

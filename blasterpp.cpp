@@ -413,11 +413,11 @@ DmaChannel::DmaChannel()
 DmaChannel::DmaChannel(unsigned int channelNumber,
                        unsigned int sampleCount,
                        const std::chrono::nanoseconds &sampleTime,
-                       unsigned int subchannelCount,
+                       unsigned int subchannelCount, int inputSubChannelIndex,
                        DelayHardware delayHardware, LoopMode loopMode)
 {
     reconfigure(channelNumber, sampleCount, sampleTime, subchannelCount,
-                delayHardware, loopMode);
+                inputSubChannelIndex, delayHardware, loopMode);
 }
 
 DmaChannel::~DmaChannel()
@@ -461,7 +461,7 @@ unsigned int DmaChannel::pageCount() const {
 void DmaChannel::reconfigure(unsigned int channelNumber,
                              unsigned int sampleCount,
                              std::chrono::nanoseconds sampleTime,
-                             unsigned int subchannelCount,
+                             unsigned int subchannelCount, int inputSubChannelIndex,
                              DelayHardware delayHardware, LoopMode loopMode)
 {
     using namespace std::chrono_literals;
@@ -482,6 +482,7 @@ void DmaChannel::reconfigure(unsigned int channelNumber,
     m_sampleTime = sampleTime;
     m_delayHardware = delayHardware;
     m_loopMode = loopMode;
+    m_inputSubChannelIndex = inputSubChannelIndex;
 
     std::cout << "Initializing DMA channel " << m_channelNumber << std::endl
               << "  subchannels: " << this->subchannelCount() << std::endl
@@ -503,6 +504,7 @@ void DmaChannel::reconfigure(unsigned int channelNumber,
     uint32_t phys_fifo_addr;
     const uint32_t phys_gpclr0 = GPIO_PHYS_BASE + 0x28;
     const uint32_t phys_gpset0 = GPIO_PHYS_BASE + 0x1c;
+    const uint32_t phys_gplev0 = GPIO_PHYS_BASE + 0x34;
 
     uint32_t dmaFlags;
 
@@ -524,11 +526,18 @@ void DmaChannel::reconfigure(unsigned int channelNumber,
         auto cbp = &m_ctl.cb[i * cbStride];
 
         // For each subchannel, copy a sample to the destination register. The
-        // destination register can be changed in setPattern()
+        // destination register can be changed in setPattern().
+        // For input subchannels, the sample is copied from the GPIO level
+        // register to the sample memory chunk.
         for (size_t j = 0; j < this->subchannelCount(); ++j) {
             cbp->info = DMA_NO_WIDE_BURSTS | DMA_WAIT_RESP;
-            cbp->src = m_vcMem->virt_to_phys(&samples(j)[i]);
-            cbp->dst = phys_gpclr0;
+            if (int(j) == m_inputSubChannelIndex) {
+                cbp->src = phys_gplev0;
+                cbp->dst = m_vcMem->virt_to_phys(&samples(j)[i]);
+            } else {
+                cbp->src = m_vcMem->virt_to_phys(&samples(j)[i]);
+                cbp->dst = phys_gpclr0;
+            }
             cbp->length = 4;
             cbp->stride = 0;
             cbp->next = m_vcMem->virt_to_phys(cbp + 1);
@@ -565,6 +574,11 @@ void DmaChannel::setPattern(unsigned int subChannel, std::vector<bool> pattern)
         ss << "Subchannel " << subChannel
                   << " out of bounds (subchannel count " << subchannelCount()
                   << ")";
+        throw std::runtime_error(ss.str());
+    } else if (int(subChannel) == m_inputSubChannelIndex) {
+        std::stringstream ss;
+        ss << "Subchannel " << subChannel
+           << " is an input channel and can't have an output pattern!";
         throw std::runtime_error(ss.str());
     }
 
@@ -614,6 +628,11 @@ void DmaChannel::setPulseWidth(unsigned int subChannel,
         ss << "Subchannel " << subChannel
                   << " out of bounds (subchannel count " << subchannelCount()
                   << ")";
+        throw std::runtime_error(ss.str());
+    } else if (int(subChannel) == m_inputSubChannelIndex) {
+        std::stringstream ss;
+        ss << "Subchannel " << subChannel
+           << " is an input channel and can't have an output pattern!";
         throw std::runtime_error(ss.str());
     }
 
