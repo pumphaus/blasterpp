@@ -9,3 +9,4 @@ set(BLASTERPP_SRC
 
 add_executable(blasterpp_example main.cpp ${BLASTERPP_SRC})
 add_executable(read_rcw_0001 rcw_0001.cpp ${BLASTERPP_SRC})
+add_executable(servo servo.cpp ${BLASTERPP_SRC})
