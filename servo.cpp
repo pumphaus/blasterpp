@@ -47,6 +47,9 @@ int main(int argc, char **argv)
     std::uniform_int_distribution<> dist(MinWidth, MaxWidth);
 
     for (int i = 0; i < 100; ++i) {
+        if (should_quit) {
+            break;
+        }
         channel.setPulseWidth(0, ServoPin, dist(gen) * 1us);
         usleep(.05e6);
     }
