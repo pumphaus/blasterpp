@@ -470,12 +470,6 @@ void DmaChannel::reconfigure(unsigned int channelNumber,
 
     reset();
 
-    if (sampleTime / subchannelCount < 1000ns) {
-        sampleTime = subchannelCount * 1000ns;
-        std::cerr << "Sample time too low for stable operation. Increasing to "
-                  << sampleTime.count() << " ns." << std::endl;
-    }
-
     m_channelNumber = channelNumber;
     m_patterns.clear();
     m_patterns.resize(subchannelCount, std::vector<bool>(sampleCount));
@@ -546,7 +540,7 @@ void DmaChannel::reconfigure(unsigned int channelNumber,
 
         /* Last DMA command */
         cbp->info = dmaFlags;
-        cbp->src = m_vcMem->virt_to_phys(m_ctl.sample.begin());	// Any data will do
+        cbp->src = phys_gplev0;	// Any data will do. Use a register address instead of slow RAM for more speed.
         cbp->dst = phys_fifo_addr;
         cbp->length = 4;
         cbp->stride = 0;

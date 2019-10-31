@@ -67,11 +67,24 @@ struct Control
  * Note that this does not install any signal handlers. You should make sure
  * that all destructors run and that the app exits cleanly.
  *
- * The lowest sample period is 1 microsecond, giving a GPIO update frequency
- * of 1 MHz. With tighter timing settings one might reach a very unstable
- * 1.5 MHz output frequency on the GPIOs. I didn't manager to get it any
- * faster, though. 1 MHz seems to be a limit for stable operation. This class
- * enforces the maximum data rate of 1 MHz.
+ * The lowest possible sample period depends on the number of channels and
+ * probably also on the Raspberry Pi Version. The limiting factor seems to be
+ * RAM access speed.
+ *
+ * Experimentally determined minimum sample periods for stable operation on a
+ * Raspberry Pi 3 A+ are:
+ *
+ * -------------------------------------
+ * | # subchannels | min sample period |
+ * |       1       |      450 ns       |
+ * |       2       |      800 ns       |
+ * |       3       |     1000 ns       |
+ * |       4       |     1300 ns       |
+ * |       5       |     1600 ns       |
+ * |       8       |     2400 ns       |
+ * -------------------------------------
+ *
+ * This indicates a relation of min_period = 275 ns * subchannel_count + 200 ns.
  */
 class DmaChannel
 {
