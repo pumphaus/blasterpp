@@ -40,8 +40,8 @@
 #include <chrono>
 #include <thread>
 
-constexpr unsigned int TriggerPin = 17;
-constexpr unsigned int EchoPin = 27;
+constexpr unsigned int TriggerPin = 20;
+constexpr unsigned int EchoPin = 16;
 
 constexpr double SpeedOfSound = 340.27;  // meters per second
 
@@ -84,6 +84,10 @@ int main(int argc, char **argv)
     auto falling_it = adjacent_find(samps.begin(), samps.end(), [](int a, int b) {
         return (a & Mask) && !(b & Mask);
     });
+    if (rising_it == samps.end() || falling_it == samps.end()) {
+        std::cerr << "Failed to find echo!" << std::endl;
+        return 1;
+    }
 
     const auto time = distance(rising_it, falling_it) * channel.sampleTime();
 
