@@ -185,7 +185,7 @@ public:
      * @sa setPwmPattern()
      */
     void setPulseWidth(unsigned int subChannel, unsigned int pin,
-                       const std::chrono::microseconds &length, unsigned int mult = 1);
+                       const std::chrono::nanoseconds &length, unsigned int mult = 1);
 
     /**
      * @brief Convenience method to set a duty cycle @p duty on @pin

@@ -614,7 +614,7 @@ void DmaChannel::setPwmPattern(unsigned int subChannel, unsigned int frequencyMu
 
 void DmaChannel::setPulseWidth(unsigned int subChannel,
                                unsigned int pin,
-                               const std::chrono::microseconds &length,
+                               const std::chrono::nanoseconds &length,
                                unsigned int mult)
 {
     if (subChannel >= subchannelCount()) {
