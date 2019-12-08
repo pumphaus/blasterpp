@@ -703,7 +703,16 @@ int DmaChannel::currentSampleIndex() const
 }
 
 void DmaChannel::init_hardware() {
-    const uint32_t nCycles = m_sampleTime.count() / 100;
+    uint32_t nCycles = m_sampleTime.count() / 100;
+    uint32_t divisor = 50;  // 10 MHz
+
+    // If we're having integer multiples of microseconds,
+    // we can decrease resolution to decrease register access times
+    if (m_sampleTime.count() % 1000 == 0) {
+        std::cout << "Using optimized channel resolution for DMA Channel." << std::endl;
+        nCycles = m_sampleTime.count() / 1000;
+        divisor = 500;
+    }
 
     if (m_delayHardware == DelayViaPwm) {
         // Initialise PWM
@@ -713,7 +722,7 @@ void DmaChannel::init_hardware() {
         udelay(10);
         clk_reg[PWMCLK_CNTL] = 0x5A000006;		// Source=PLLD (500MHz)
         udelay(100);
-        clk_reg[PWMCLK_DIV] = 0x5A000000 | (50<<12);	// set pwm div to 50, giving 10MHz
+        clk_reg[PWMCLK_DIV] = 0x5A000000 | (divisor<<12);	// set pwm div to 50, giving 10MHz
         udelay(100);
         clk_reg[PWMCLK_CNTL] = 0x5A000016;		// Source=PLLD and enable
         udelay(100);
@@ -733,7 +742,7 @@ void DmaChannel::init_hardware() {
         udelay(100);
         clk_reg[PCMCLK_CNTL] = 0x5A000006;		// Source=PLLD (500MHz)
         udelay(100);
-        clk_reg[PCMCLK_DIV] = 0x5A000000 | (50<<12);	// Set pcm div to 50, giving 10MHz
+        clk_reg[PCMCLK_DIV] = 0x5A000000 | (divisor<<12);	// Set pcm div to 50, giving 10MHz
         udelay(100);
         clk_reg[PCMCLK_CNTL] = 0x5A000016;		// Source=PLLD and enable
         udelay(100);
@@ -749,7 +758,8 @@ void DmaChannel::init_hardware() {
         udelay(100);
     }
 
-    std::cout << "  one sample = " << nCycles << " cycles at 10 MHz" << std::endl;
+    std::cout << "  sample time = " << m_sampleTime.count() << " ns" << std::endl;
+    std::cout << "  one sample = " << nCycles << " cycle(s) at " << (500 / divisor) << " MHz" << std::endl;
 }
 
 unsigned int BlasterPP::DmaChannel::controlBlockCount() const
