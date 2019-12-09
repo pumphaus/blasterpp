@@ -253,7 +253,7 @@ private:
     unsigned int m_channelNumber = 0;
     int m_inputSubChannelIndex = -1;
     std::vector<std::vector<bool>> m_patterns;
-    std::vector<size_t> m_pulseWidths;
+    std::array<unsigned int, 32> m_pulseWidths;
     std::chrono::nanoseconds m_sampleTime;
     std::unique_ptr<vc_mem> m_vcMem;
     Control m_ctl;

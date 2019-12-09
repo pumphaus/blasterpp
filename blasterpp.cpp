@@ -473,7 +473,6 @@ void DmaChannel::reconfigure(unsigned int channelNumber,
     m_channelNumber = channelNumber;
     m_patterns.clear();
     m_patterns.resize(subchannelCount, std::vector<bool>(sampleCount));
-    m_pulseWidths.resize(subchannelCount);
     std::fill(m_pulseWidths.begin(), m_pulseWidths.end(), 0);
     m_sampleTime = sampleTime;
     m_delayHardware = delayHardware;
@@ -643,8 +642,8 @@ void DmaChannel::setPulseWidth(unsigned int subChannel,
         width--;
     }
 
-    auto oldWidth = m_pulseWidths[subChannel];
-    m_pulseWidths[subChannel] = width;
+    const unsigned int oldWidth = m_pulseWidths[pin];
+    m_pulseWidths[pin] = width;
 
     auto samps = samples(subChannel);
 
