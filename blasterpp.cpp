@@ -473,6 +473,8 @@ void DmaChannel::reconfigure(unsigned int channelNumber,
     m_channelNumber = channelNumber;
     m_patterns.clear();
     m_patterns.resize(subchannelCount, std::vector<bool>(sampleCount));
+    m_pulseWidths.resize(subchannelCount);
+    std::fill(m_pulseWidths.begin(), m_pulseWidths.end(), 0);
     m_sampleTime = sampleTime;
     m_delayHardware = delayHardware;
     m_loopMode = loopMode;
@@ -612,10 +614,13 @@ void DmaChannel::setPwmPattern(unsigned int subChannel, unsigned int frequencyMu
     setPattern(subChannel, pattern);
 }
 
+#define clearbit(x, bit) (x) &= ~(1u << bit)
+#define setbit(x, bit) (x) |= (1u << bit)
+
 void DmaChannel::setPulseWidth(unsigned int subChannel,
                                unsigned int pin,
                                const std::chrono::nanoseconds &length,
-                               unsigned int mult)
+                               unsigned int mult, SetMode mode)
 {
     if (subChannel >= subchannelCount()) {
         std::stringstream ss;
@@ -630,38 +635,58 @@ void DmaChannel::setPulseWidth(unsigned int subChannel,
         throw std::runtime_error(ss.str());
     }
 
-    const unsigned subcycle = sampleCount() / mult;
-    unsigned int width = std::clamp<long>(length / sampleTime(), 0, subcycle);
+    const unsigned subcycleLength = sampleCount() / mult;
+    unsigned int width = std::clamp<long>(length / sampleTime(), 0, subcycleLength);
     const auto pattern = this->pattern(subChannel);
 
     if (width && pattern[width]) {
         width--;
     }
 
+    auto oldWidth = m_pulseWidths[subChannel];
+    m_pulseWidths[subChannel] = width;
+
     auto samps = samples(subChannel);
-    if (!width || width == subcycle) {
+
+    if (!width || width == subcycleLength) {
         // Zero-width or full-scale: deactivate PWM and set static value
-        for (auto &samp : samps) {
-            samp &= ~(1u << pin);
+        if (mode == SetDifferential) {
+            for (size_t i = 0; i < samps.size(); i += subcycleLength) {
+                clearbit(samps[i], pin);
+                clearbit(samps[i + oldWidth], pin);
+            }
+        } else {
+            for (auto &samp : samps) {
+                clearbit(samp, pin);
+            }
         }
-        setGpioValue(pin, width == subcycle);
+        setGpioValue(pin, width == subcycleLength);
         return;
     }
 
-    for (size_t i = 0; i < samps.size(); ++i) {
-        if ((i % subcycle == 0) || (i % subcycle == width)) {
-            samps[i] |= (1u << pin);
-        } else {
-            samps[i] &= ~(1u << pin);
+    if (mode == SetDifferential) {
+        for (size_t i = 0; i < samps.size();i += subcycleLength) {
+            clearbit(samps[i + oldWidth], pin);
+            setbit(samps[i], pin);
+            setbit(samps[i + width], pin);
+        }
+    } else {
+        for (size_t i = 0; i < samps.size(); ++i) {
+            if ((i % subcycleLength == 0) || (i % subcycleLength == width)) {
+                setbit(samps[i], pin);
+            } else {
+                clearbit(samps[i], pin);
+            }
         }
     }
 }
 
-void DmaChannel::setPwmDutyCycle(unsigned int subChannel, unsigned int pin, float duty, unsigned int mult)
+void DmaChannel::setPwmDutyCycle(unsigned int subChannel, unsigned int pin, float duty, unsigned int mult, SetMode mode)
 {
     using namespace std::chrono;
     setPulseWidth(subChannel, pin,
-                  duration_cast<microseconds>(duty / mult * cycleTime()), mult);
+                  duration_cast<microseconds>(duty / mult * cycleTime()), mult,
+                  mode);
 }
 
 std::vector<bool> DmaChannel::pattern(unsigned int subChannel) const

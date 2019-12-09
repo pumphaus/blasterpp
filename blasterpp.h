@@ -99,6 +99,11 @@ public:
         SingleShot
     };
 
+    enum SetMode {
+        SetAll,          ///< @brief the safe option
+        SetDifferential  ///< @brief much faster, but be sure to not modify the samples outside the DmaChannel!
+    };
+
     explicit DmaChannel();
 
     /**
@@ -185,7 +190,8 @@ public:
      * @sa setPwmPattern()
      */
     void setPulseWidth(unsigned int subChannel, unsigned int pin,
-                       const std::chrono::nanoseconds &length, unsigned int mult = 1);
+                       const std::chrono::nanoseconds &length, unsigned int mult = 1,
+                       SetMode mode = SetAll);
 
     /**
      * @brief Convenience method to set a duty cycle @p duty on @pin
@@ -193,7 +199,8 @@ public:
      * Calculates the correct pulse width and calls setPulseWidth().
      */
     void setPwmDutyCycle(unsigned int subChannel, unsigned int pin,
-                         float duty, unsigned int mult = 1);
+                         float duty, unsigned int mult = 1,
+                         SetMode mode = SetAll);
 
     /// @brief Returns the current output on/off pattern
     std::vector<bool> pattern(unsigned int subChannel) const;
@@ -246,6 +253,7 @@ private:
     unsigned int m_channelNumber = 0;
     int m_inputSubChannelIndex = -1;
     std::vector<std::vector<bool>> m_patterns;
+    std::vector<size_t> m_pulseWidths;
     std::chrono::nanoseconds m_sampleTime;
     std::unique_ptr<vc_mem> m_vcMem;
     Control m_ctl;
