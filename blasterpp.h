@@ -49,7 +49,7 @@ void setGpioValue(unsigned int pin, bool value);
 
 struct vc_mem;
 
-struct dma_cb_t {
+struct __attribute__((packed, aligned(4))) dma_cb_t {
   uint32_t info, src, dst, length,
      stride, next, pad[2];
 };

@@ -458,7 +458,9 @@ unsigned int DmaChannel::pageCount() const {
             + subchannelCount() * sampleCount() * sizeof(uint32_t) + PAGE_SIZE - 1) >> PAGE_SHIFT;
 }
 
-void DmaChannel::reconfigure(unsigned int channelNumber,
+void
+__attribute__((optimize("O0")))
+DmaChannel::reconfigure(unsigned int channelNumber,
                              unsigned int sampleCount,
                              std::chrono::nanoseconds sampleTime,
                              unsigned int subchannelCount, int inputSubChannelIndex,
